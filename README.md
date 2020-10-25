@@ -1,4 +1,4 @@
-#To Run:
+# To Run:
 
 go build mr/mr.go
 
@@ -10,7 +10,7 @@ go build main.go worker.go fmanager.go
 
 ./main input_files/pg-metamorphosis.txt wc.so 
 
-#To compare output to sequential: 
+# To compare output to sequential: 
 
 go build mrsequential.go
 
