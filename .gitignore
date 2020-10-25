@@ -1,0 +1,30 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# the executable made via "go build main.go worker.go ..."
+main
+
+# files written during every runtime
+input_files/chunks/
+partition_files/
+output_files/
+intermediate_files/
+mr-out-0
+mr-seq-out-0
+wc.so
+mrsequential
+
+*.DS_Store
