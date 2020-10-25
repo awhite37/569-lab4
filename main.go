@@ -18,7 +18,7 @@ const M = 100
 const R = 8
 
 //number of tasks completed to wait for before killing master
-const n = 4
+const n = 20
 
 func checkArgs(argc int, argv []string) (string, string) {
 	if argc != 3 {
@@ -49,7 +49,7 @@ func main() {
 	rfWorkers := []*rf.Worker{}
 	for i := 0; i < numReplicas; i++ {
 		persister := rf.InitPersister()
-		applyCh := make(chan rf.ApplyMsg, 10)
+		applyCh := make(chan rf.ApplyMsg,100)
 		new := rf.Make(rfWorkers, i, persister, applyCh)
 		rfWorkers = append(rfWorkers, new)
 	}
