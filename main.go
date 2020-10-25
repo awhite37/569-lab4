@@ -1,21 +1,24 @@
 package main
 
 import (
+	"./rf"
 	"fmt"
 	"os"
-	"./rf"
 )
 
 const numWorkers = 8
+
 //number of servers for replicated logs
 const numReplicas = 2
+
 //number of chunks of input data
-const M = 8
+const M = 100
+
 //number of reduce tasks
 const R = 8
-//time to wait before killing master
-const n = 4
 
+//number of tasks completed to wait for before killing master
+const n = 4
 
 func checkArgs(argc int, argv []string) (string, string) {
 	if argc != 3 {
@@ -23,7 +26,7 @@ func checkArgs(argc int, argv []string) (string, string) {
 		os.Exit(1)
 	}
 	if _, err := os.Stat(argv[1]); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "'%s' not in current directory\n",argv[1])
+		fmt.Fprintf(os.Stderr, "'%s' not in current directory\n", argv[1])
 		os.Exit(1)
 	}
 	return argv[1], argv[2]
@@ -35,16 +38,16 @@ func main() {
 	//make dir for intermediate files and output files to go in
 	path := "./intermediate_files"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-    	os.Mkdir(path, 0700)
+		os.Mkdir(path, 0700)
 	}
 	path = "./output_files"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-    	os.Mkdir(path, 0700)
+		os.Mkdir(path, 0700)
 	}
 
-	workers, mapTasks, reduceTaks := build(sofilepath, chunkFiles)	
+	workers, mapTasks, reduceTaks := build(sofilepath, chunkFiles)
 	rfWorkers := []*rf.Worker{}
-	for i:= 0; i<numReplicas; i++ {
+	for i := 0; i < numReplicas; i++ {
 		persister := rf.InitPersister()
 		applyCh := make(chan rf.ApplyMsg, 10)
 		new := rf.Make(rfWorkers, i, persister, applyCh)
@@ -52,7 +55,7 @@ func main() {
 	}
 	rfWorkers[0].IsLeader = true
 	rfWorkers[0].InitLeader()
-	for _, worker := range(rfWorkers) {
+	for _, worker := range rfWorkers {
 		go worker.Run()
 	}
 	//master is worker with id 0
@@ -63,7 +66,7 @@ func main() {
 	for i := 1; i < numWorkers; i++ {
 		go workers[i].run()
 	}
-	
+
 	for len(workers[0].workCompleted) < n {
 		//simulate master failure, wait for n tasks to complete then kill master node
 	}
@@ -84,26 +87,27 @@ func build(sofilepath string, chunkFiles map[string]*os.File) ([]*Worker, []*Map
 	mapf, reducef := loadPlugin(sofilepath)
 
 	chunkFileNames := make([]string, len(chunkFiles))
-	i := 0;
-	for k := range chunkFiles { 
-		chunkFileNames[i] = k;
-		i++;
+	i := 0
+	for k := range chunkFiles {
+		chunkFileNames[i] = k
+		i++
 	}
 
 	for i := 0; i < numWorkers; i++ {
 		workers[i] = &Worker{
-			id:       		i,
-			workers:  		workers,
-			table:			make([]*TableEntry, numWorkers),
-			tableInput:    make(chan []*TableEntry, numWorkers*2),
-			workRequests:  make(chan int, M+R),
-			workCompleted: make(chan int, M+R),
+			id:             i,
+			workers:        workers,
+			table:          make([]*TableEntry, numWorkers),
+			tableInput:     make(chan []*TableEntry, numWorkers*2),
+			workRequests:   make(chan int, M+R),
+			workCompleted:  make(chan int, M+R),
 			checkCompleted: make(chan int, M+R),
-			newCommits: make(chan int, M+R),
-			logCh:			make(chan *Task, M+R),
-			redoMap:			make(chan *MapTask, M),
-			redoReduce:		make(chan *ReduceTask, R),
-			killCh:			make(chan int, M+R),
+			newCommits:     make(chan int, M+R),
+			logCh:          make(chan *Task, M+R),
+			redoMap:        make(chan *MapTask, M),
+			redoReduce:     make(chan *ReduceTask, R),
+			killCh:         make(chan int, M+R),
+			heartbeat:      make(chan int, 1),
 			isLeader:       false,
 		}
 		for j := 0; j < numWorkers; j++ {
@@ -112,18 +116,16 @@ func build(sofilepath string, chunkFiles map[string]*os.File) ([]*Worker, []*Map
 	}
 	for i := 0; i < M; i++ {
 		mapTasks[i] = &MapTask{
-			id:		i,
-			mapf:		mapf,
-			chunk:	chunkFiles[chunkFileNames[i]],
+			id:    i,
+			mapf:  mapf,
+			chunk: chunkFiles[chunkFileNames[i]],
 		}
 	}
 	for i := 0; i < R; i++ {
 		reduceTasks[i] = &ReduceTask{
-			id:		i,
-			reducef:	reducef,
+			id:      i,
+			reducef: reducef,
 		}
 	}
 	return workers, mapTasks, reduceTasks
 }
-
-

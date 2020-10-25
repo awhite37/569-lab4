@@ -1,120 +1,120 @@
 package main
 
 import (
-	"time"
-	"fmt"
-	"sync"
-	"os"
 	"./mr"
 	"./rf"
-	"io/ioutil"
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
 	"sort"
+	"sync"
+	"time"
 )
 
+//time to wait before sending heartbeat to master
+const X = 50 * time.Millisecond
 //time to wait before declaring a node failed
-const t_fail = 1000 * time.Millisecond
-
+const t_fail = 300 * time.Millisecond
 
 type Worker struct {
-	id				  int
-	workers       []*Worker
-	table         []*TableEntry
-	tableInput    chan []*TableEntry
-	workRequests  chan int
-	workCompleted chan int
+	id             int
+	workers        []*Worker
+	table          []*TableEntry
+	tableInput     chan []*TableEntry
+	workRequests   chan int
+	workCompleted  chan int
 	checkCompleted chan int
-	newCommits 		chan int
-	logCh				chan *Task
-	redoMap		  chan *MapTask
-	redoReduce    chan *ReduceTask
-	killCh		  chan int
-	isLeader      bool	  
-	rfWorker		  *rf.Worker
+	newCommits     chan int
+	logCh          chan *Task
+	redoMap        chan *MapTask
+	redoReduce     chan *ReduceTask
+	killCh         chan int
+	heartbeat      chan int
+	isLeader       bool
+	rfWorker       *rf.Worker
 }
 
 type TableEntry struct {
-	id 	int
-	hb 	int
-	t  	int
-	mux 	sync.RWMutex
+	id  int
+	hb  int
+	t   int
+	mux sync.RWMutex
 }
 
 type Task struct {
-	m 	 	*MapTask
-	r 		*ReduceTask
+	m *MapTask
+	r *ReduceTask
 }
 type MapTask struct {
-	id 	int
-	mapf (func(string, string) []mr.KeyVal)
+	id    int
+	mapf  (func(string, string) []mr.KeyVal)
 	chunk *os.File
 }
 
 type ReduceTask struct {
-	id 	int
+	id      int
 	reducef (func(string, []string) string)
 }
 
-func (worker *Worker) runMaster(maps []*MapTask, reduces []*ReduceTask, restart bool) {
+func (worker *Worker) runMaster(mapTasks []*MapTask, reduceTasks []*ReduceTask, restart bool) {
 	fmt.Printf("launching master node\n")
-	if !restart{ //launch only on init
+	if !restart { //launch only on init
 		go worker.appendLog()
-	}
-	//make deep copies of task lists for manipulating
-	mapTasks := cpyMap(maps)
-	reduceTasks := cpyReduce(reduces)
-	for len(worker.newCommits) > 0 {
-		//wait for processing commits to finish
-	}
-	//clear work completed channel
-	for len(worker.workCompleted) > 0 {
-		<- worker.workCompleted
-	}
-	//init from saved state if it exists
-	if len(worker.rfWorker.Log) > 0 {
-		fmt.Printf("\ninitializing tasks from log\n")
-		for _, command := range(worker.rfWorker.Log) {
-			worker.workCompleted <- 1
-			task := command.Command
-			if task.(*Task).m != nil {
-				//delete redundant map tasks
-				id := task.(*Task).m.id
-				if id+1 >= len(mapTasks) {
-					mapTasks = []*MapTask{}
+	} else {
+		for len(worker.newCommits) > 0 {
+			//wait for processing commits to finish
+		}
+		//clear out old channel input
+		for len(worker.redoMap) > 0 {
+			<-worker.redoMap
+		}
+		for len(worker.redoReduce) > 0 {
+			<-worker.redoReduce
+		}
+		for len(worker.workCompleted) > 0 {
+			<-worker.workCompleted
+		}
+		//init from saved state if it exists
+		if len(worker.rfWorker.Log) > 0 {
+			fmt.Printf("\ninitializing tasks from log\n")
+			for _, command := range worker.rfWorker.Log {
+				worker.workCompleted <- 1
+				task := command.Command
+				if task.(*Task).m != nil {
+					//delete redundant map tasks
+					id := task.(*Task).m.id
+					mapTasks = deleteMap(mapTasks, id)
+					fmt.Printf("skipping previously completed map task %d\n", id)
 				} else {
-					mapTasks = append(mapTasks[:id], mapTasks[id+1:]...)
-				}
-			} else {
-				//delete redundant reduce tasks
-				id := task.(*Task).r.id
-				if id+1 >= len(mapTasks) {
-					reduceTasks = []*ReduceTask{}
-				} else {
-					reduceTasks = append(reduceTasks[:id], reduceTasks[id+1:]...)
+					//delete redundant reduce tasks
+					id := task.(*Task).r.id
+					reduceTasks = deleteReduce(reduceTasks, id)
+					fmt.Printf("skipping previously completed reduce task %d\n", id)
 				}
 			}
-			fmt.Printf("skipping previously completed task\n")
 		}
 	}
 	//read work requests from workers and assign work to them
 	//first run all map tasks
+
 	for len(worker.workCompleted) < M {
 		if len(worker.killCh) > 0 {
-			<- worker.killCh
+			<-worker.killCh
 			//failure simulation, end this task
 			return
 		}
 		//add uncompleted tasks back to list
 		if len(worker.redoMap) > 0 {
-			task := <- worker.redoMap
+			task := <-worker.redoMap
 			mapTasks = append(mapTasks, task)
 		}
+
 		if len(mapTasks) == 0 {
 			//wait for tasks to complete
 			continue
 		}
-		requestID := <- worker.workRequests
-		//pop first task
+		requestID := <-worker.workRequests
 		task := mapTasks[0]
 		mapTasks = mapTasks[1:]
 		go worker.assignMap(requestID, task)
@@ -122,20 +122,20 @@ func (worker *Worker) runMaster(maps []*MapTask, reduces []*ReduceTask, restart 
 	//run all reduce tasks
 	for len(worker.workCompleted) < M+R {
 		if len(worker.killCh) > 0 {
-			<- worker.killCh
+			<-worker.killCh
 			//failure simulation, end this task
 			return
 		}
 		//add uncompleted tasks back to list
 		if len(worker.redoReduce) > 0 {
-			task := <- worker.redoReduce
+			task := <-worker.redoReduce
 			reduceTasks = append(reduceTasks, task)
 		}
 		if len(reduceTasks) == 0 {
 			//wait for tasks to complete
 			continue
 		}
-		requestID := <- worker.workRequests
+		requestID := <-worker.workRequests
 		//pop first task
 		task := reduceTasks[0]
 		reduceTasks = reduceTasks[1:]
@@ -145,73 +145,88 @@ func (worker *Worker) runMaster(maps []*MapTask, reduces []*ReduceTask, restart 
 
 func (worker *Worker) appendLog() {
 	for {
-		task := <- worker.logCh
+		task := <-worker.logCh
 		//save completed task to log
 		worker.rfWorker.Start(task)
 		//wait for successful commit of log entry
 		<-worker.rfWorker.ApplyCh
-		<- worker.newCommits
+		<-worker.newCommits
 	}
 }
 
-
 func (worker *Worker) run() {
+	//send heartbeats to master
+	go worker.sendHB()
 	for {
 		//send this workers ID to the master to request a task
 		leader := worker.findLeader()
 		leader.workRequests <- worker.id
-		for len(worker.checkCompleted) == 0 {
-			//wait for work to finish
-		}
-		<- worker.checkCompleted
+		//wait for task to complete
+		<-worker.checkCompleted
 	}
 }
 
 func (worker *Worker) assignMap(requestID int, task *MapTask) {
 	go worker.workers[requestID].doMap(task)
 	//wait for work completed signal
-	select {
-		case <-worker.workers[requestID].workCompleted:
-			break
-		case <-time.After(time.Duration(t_fail)):
-			fmt.Printf("\nfailure detected in worker node %d, restarting map task\n",requestID)
-			worker.redoMap <- task
-			return
+	worker.newCommits <- 1
+	Loop: for {
+		select {
+		case <- worker.workers[requestID].workCompleted:
+			break Loop
+		default:
+			select {
+			case <-worker.workers[requestID].heartbeat:
+				continue Loop
+			case <-time.After(time.Duration(t_fail)):
+				fmt.Printf("\nfailure detected in worker node %d, restarting map task %d\n", requestID, task.id)
+				worker.redoMap <- task
+				<- worker.newCommits
+				worker.workers[requestID].checkCompleted <- 1
+				return
+			}
+		}
 	}
 	//save completed task to log
-   worker.logCh <- &Task{m:task, r:nil}
-   worker.newCommits <- 1
+	worker.logCh <- &Task{m: task, r: nil}
 	worker.workCompleted <- 1
+	worker.workers[requestID].checkCompleted <- 1
 }
 
 func (worker *Worker) assignReduce(requestID int, task *ReduceTask) {
 	go worker.workers[requestID].doReduce(task)
 	//wait for work completed signal
-	select {
-		case <-worker.workers[requestID].workCompleted:
-			break
-		case <-time.After(time.Duration(t_fail)):
-			fmt.Printf("\nfailure detected in worker node %d, restarting reduce task\n",requestID)
-			worker.redoReduce <- task
-			return
+	worker.newCommits <- 1
+	Loop: for {
+		select {
+		case <- worker.workers[requestID].workCompleted:
+			break Loop
+		default:
+			select {
+			case <-worker.workers[requestID].heartbeat:
+				continue Loop
+			case <-time.After(time.Duration(t_fail)):
+				fmt.Printf("\nfailure detected in worker node %d, restarting reduce task %d\n", requestID, task.id)
+				worker.redoReduce <- task
+				<- worker.newCommits
+				worker.workers[requestID].checkCompleted <- 1
+				return
+			}
+		}
 	}
 	//save completed task to log
-	worker.logCh <- &Task{m:nil, r:task}
-	worker.newCommits <- 1
+	worker.logCh <- &Task{m: nil, r: task}
 	worker.workCompleted <- 1
+	worker.workers[requestID].checkCompleted <- 1
 }
 
 func (worker *Worker) doMap(task *MapTask) {
-	if (worker.id == 5) {
-		//simulate failure of node 5, should re-assign task
-		return
-	}
 	chunkFileContent := safeRead(task.chunk.Name())
-	kva := task.mapf(task.chunk.Name(),chunkFileContent)
+	kva := task.mapf(task.chunk.Name(), chunkFileContent)
 	m := make(map[int][]mr.KeyVal, R)
 	for _, kv := range kva {
 		partitionNum := hash(kv.Key) % R
-		m[partitionNum] = append(m[partitionNum], kv) 
+		m[partitionNum] = append(m[partitionNum], kv)
 	}
 	files := make([]*os.File, R)
 	for i := 0; i < R; i++ {
@@ -229,14 +244,9 @@ func (worker *Worker) doMap(task *MapTask) {
 		os.Remove(files[i].Name())
 	}
 	worker.workCompleted <- 1
-	worker.checkCompleted <- 1
 }
 
 func (worker *Worker) doReduce(task *ReduceTask) {
-	if (worker.id == 3) {
-		//simulate failure of node 3, should re-assign task
-		return
-	}
 	oname := fmt.Sprintf("./output_files/mr-out-%03d", task.id)
 	ofile, _ := os.Create(oname)
 
@@ -270,14 +280,23 @@ func (worker *Worker) doReduce(task *ReduceTask) {
 	}
 	ofile.Close()
 	worker.workCompleted <- 1
-	worker.checkCompleted <- 1
 }
 
-func (worker *Worker) findLeader() (*Worker) {
+func (worker *Worker) sendHB() {
+	//these nodes cannot send heartbeats to simulate failure
+	if worker.id != 5 {
+		for {
+			worker.heartbeat <- 1
+			time.Sleep(X)
+		}
+	}
+}
+
+func (worker *Worker) findLeader() *Worker {
 	var leader *Worker
 	leader = nil
 	for leader == nil {
-		for _, peer := range(worker.workers) {
+		for _, peer := range worker.workers {
 			if peer.isLeader {
 				leader = peer
 				break
@@ -287,18 +306,50 @@ func (worker *Worker) findLeader() (*Worker) {
 	return leader
 }
 
-func cpyMap(mapTasks []*MapTask) ([]*MapTask){
+func deleteMap(tasks []*MapTask, id int) []*MapTask {
+	for i, task := range tasks {
+		if task.id == id {
+			if i == 0 {
+				tasks = tasks[i+1:]
+			} else if i == len(tasks)-1 {
+				tasks = tasks[:i]
+			} else {
+				tasks = append(tasks[:i], tasks[i+1:]...)
+			}
+			break
+		}
+	}
+	return tasks
+}
+
+func deleteReduce(tasks []*ReduceTask, id int) []*ReduceTask {
+	for i, task := range tasks {
+		if task.id == id {
+			if i == 0 {
+				tasks = tasks[i+1:]
+			} else if i == len(tasks)-1 {
+				tasks = tasks[:i]
+			} else {
+				tasks = append(tasks[:i], tasks[i+1:]...)
+			}
+			break
+		}
+	}
+	return tasks
+}
+
+func cpyMap(mapTasks []*MapTask) []*MapTask {
 	new := []*MapTask{}
-	for _, task := range(mapTasks) {
-		new = append(new, &MapTask{id:task.id, mapf:task.mapf, chunk:task.chunk})
+	for _, task := range mapTasks {
+		new = append(new, &MapTask{id: task.id, mapf: task.mapf, chunk: task.chunk})
 	}
 	return new
 }
 
-func cpyReduce(reduceTasks []*ReduceTask) ([]*ReduceTask){
+func cpyReduce(reduceTasks []*ReduceTask) []*ReduceTask {
 	new := []*ReduceTask{}
-	for _, task := range(reduceTasks) {
-		new = append(new, &ReduceTask{id:task.id, reducef:task.reducef})
+	for _, task := range reduceTasks {
+		new = append(new, &ReduceTask{id: task.id, reducef: task.reducef})
 	}
 	return new
 }

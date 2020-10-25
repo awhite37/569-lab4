@@ -1,74 +1,76 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"bufio"
-	"path/filepath"
-	"hash/fnv"
-	"plugin"
-	"log"
-	"io/ioutil"
 	"./mr"
+	"bufio"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"os"
+	"path/filepath"
+	"plugin"
 )
 
 func safeOpen(filepath string, option string) *os.File {
-	var err error;
-	var f *os.File;
+	var err error
+	var f *os.File
 	if option == "a" {
-		f, err = os.OpenFile(filepath, os.O_APPEND|os.O_CREATE|os.O_WRONLY,0644);
+		f, err = os.OpenFile(filepath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	}
 	if option == "r" {
-		f, err = os.Open(filepath);
+		f, err = os.Open(filepath)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error opening file '%s'\n",filepath);
-		os.Exit(1);
+		fmt.Fprintf(os.Stderr, "error opening file '%s'\n", filepath)
+		os.Exit(1)
 	}
-	return f;
+	return f
 }
 
 func safeRead(filepath string) string {
-	fileContentBytes, readErr := ioutil.ReadFile(filepath);
-	fileContent := string(fileContentBytes);
+	fileContentBytes, readErr := ioutil.ReadFile(filepath)
+	fileContent := string(fileContentBytes)
 	if readErr != nil {
 		fmt.Fprintf(os.Stderr, "error reading file '%s'\nmsg:\n%s",
-			filepath, readErr);
-		os.Exit(1);
+			filepath, readErr)
+		os.Exit(1)
 	}
-	return fileContent;
+	return fileContent
 }
 
 func safeWrite(filepath string, content string) {
-   err := ioutil.WriteFile(filepath, []byte(content), 0644)
+	err := ioutil.WriteFile(filepath, []byte(content), 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error writing file '%s'\nmsg:\n%s\n",
-			filepath, err);
-		os.Exit(1);
-   }
+			filepath, err)
+		os.Exit(1)
+	}
 }
 
 func safeAppend(filepath string, content string) {
-	f, err := os.OpenFile(filepath,os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filepath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening file '%s'\nmsg:\n%s\n",
-			filepath, err);
-		os.Exit(1);
+			filepath, err)
+		os.Exit(1)
 	}
-	defer f.Close();
+	defer f.Close()
 	if _, err := f.WriteString(content); err != nil {
 		fmt.Fprintf(os.Stderr, "error appending file '%s'\nmsg:\n%s\n",
-			filepath, err);
-		os.Exit(1);
+			filepath, err)
+		os.Exit(1)
 	}
 }
 
 func getChunkFileName(fpath string, workerNum int, M int) string {
-	prefix := "input_files/chunks/%s_chunk_%03d_of_%03d.txt";
-	chunkFileNum := workerNum % M;
-	if chunkFileNum == 0 { chunkFileNum = M; }
-	chunkFileName := fmt.Sprintf(prefix, filepath.Base(fpath), chunkFileNum, M);
-	return chunkFileName;
+	prefix := "input_files/chunks/%s_chunk_%03d_of_%03d.txt"
+	chunkFileNum := workerNum % M
+	if chunkFileNum == 0 {
+		chunkFileNum = M
+	}
+	chunkFileName := fmt.Sprintf(prefix, filepath.Base(fpath), chunkFileNum, M)
+	return chunkFileName
 }
 
 func checkDirExists(dirpath string) {
@@ -78,35 +80,35 @@ func checkDirExists(dirpath string) {
 }
 
 func hash(str string) int {
-	hashVal := fnv.New32a();
-	hashVal.Write([]byte(str));
-	return int(hashVal.Sum32());
+	hashVal := fnv.New32a()
+	hashVal.Write([]byte(str))
+	return int(hashVal.Sum32())
 }
 
 func createChunkFiles(filepath string) map[string]*os.File {
-	checkDirExists("input_files/chunks/");
-	lineNum := 0;
-	file := safeOpen(filepath, "r");
-	scanner := bufio.NewScanner(file);
+	checkDirExists("input_files/chunks/")
+	lineNum := 0
+	file := safeOpen(filepath, "r")
+	scanner := bufio.NewScanner(file)
 
-	chunkFiles := make(map[string]*os.File);
-	for i:=1; i<=M; i++ {
-		chunkFileName := getChunkFileName(filepath, i, M);
-		os.Remove(chunkFileName);
-		chunkFiles[chunkFileName] = safeOpen(chunkFileName, "a");
+	chunkFiles := make(map[string]*os.File)
+	for i := 1; i <= M; i++ {
+		chunkFileName := getChunkFileName(filepath, i, M)
+		os.Remove(chunkFileName)
+		chunkFiles[chunkFileName] = safeOpen(chunkFileName, "a")
 	}
 
 	for scanner.Scan() {
-		lineNum++;
-		chunkFileName := getChunkFileName(filepath, lineNum, M);
-		safeAppend(chunkFileName, scanner.Text()+"\n");
+		lineNum++
+		chunkFileName := getChunkFileName(filepath, lineNum, M)
+		safeAppend(chunkFileName, scanner.Text()+"\n")
 	}
 
 	for _, file := range chunkFiles {
-		file.Close();
+		file.Close()
 	}
 
-	file.Close();
+	file.Close()
 	return chunkFiles
 }
 

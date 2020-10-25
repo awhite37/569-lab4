@@ -17,6 +17,7 @@ import "strings"
 
 //num reduce tasks for output comparison
 const R = 8
+
 // for sorting by key.
 type ByKey []mr.KeyVal
 
@@ -89,20 +90,20 @@ func main() {
 	ofile.Close()
 
 	filepath := fmt.Sprintf("./mr-out-0")
-	sorted_out, _ := os.Create(filepath);
+	sorted_out, _ := os.Create(filepath)
 
 	content := []string{}
 	for i = 0; i < R; i++ {
 		fname := fmt.Sprintf("./output_files/mr-out-%03d", i)
 		s, _ := (ioutil.ReadFile(fname))
-		temp := strings.Split(string(s),"\n")
+		temp := strings.Split(string(s), "\n")
 		content = append(content, temp...)
 	}
-	
+
 	sort.Strings(content)
 	for _, line := range content {
 		if line != "" {
-			fmt.Fprintf(sorted_out, line + "\n")
+			fmt.Fprintf(sorted_out, line+"\n")
 		}
 	}
 	sorted_out.Close()
