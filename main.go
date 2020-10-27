@@ -11,14 +11,13 @@ const numWorkers = 8
 //number of servers for replicated logs
 const numReplicas = 2
 
-//number of chunks of input data
-const M = 100
-
 //number of reduce tasks
 const R = 8
 
 //number of tasks completed to wait for before killing master
+//used to simulate failure
 const n = 20
+
 
 func checkArgs(argc int, argv []string) (string, string) {
 	if argc != 3 {
@@ -34,7 +33,10 @@ func checkArgs(argc int, argv []string) (string, string) {
 
 func main() {
 	filename, sofilepath := checkArgs(len(os.Args), os.Args)
-	chunkFiles := createChunkFiles(filename)
+	//TODO: compute M dynamically based on file size
+	//each chunk should be ~64MB
+	M := 100 
+	chunkFiles := createChunkFiles(filename, M)
 	//make dir for intermediate files and output files to go in
 	path := "./intermediate_files"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -45,11 +47,11 @@ func main() {
 		os.Mkdir(path, 0700)
 	}
 
-	workers, mapTasks, reduceTaks := build(sofilepath, chunkFiles)
+	workers, mapTasks, reduceTaks := build(sofilepath, chunkFiles, M)
 	rfWorkers := []*rf.Worker{}
 	for i := 0; i < numReplicas; i++ {
 		persister := rf.InitPersister()
-		applyCh := make(chan rf.ApplyMsg,100)
+		applyCh := make(chan rf.ApplyMsg,M+R)
 		new := rf.Make(rfWorkers, i, persister, applyCh)
 		rfWorkers = append(rfWorkers, new)
 	}
@@ -61,7 +63,7 @@ func main() {
 	//master is worker with id 0
 	workers[0].isLeader = true
 	workers[0].rfWorker = rfWorkers[0]
-	go workers[0].runMaster(mapTasks, reduceTaks, false)
+	go workers[0].runMaster(mapTasks, reduceTaks)
 	//launch the rest of the workers
 	for i := 1; i < numWorkers; i++ {
 		go workers[i].run()
@@ -73,14 +75,15 @@ func main() {
 	fmt.Printf("\nkilling master node to simulate failure\n")
 	workers[0].killCh <- 1
 	fmt.Printf("restarting master...\n")
-	go workers[0].runMaster(mapTasks, reduceTaks, true)
+	workers[0].restart = true
+	go workers[0].runMaster(mapTasks, reduceTaks)
 	for len(workers[0].workCompleted) < M+R {
 		//wait for all tasks to finish
 	}
 	fmt.Printf("\nMapReduce completed successfully\n")
 }
 
-func build(sofilepath string, chunkFiles map[string]*os.File) ([]*Worker, []*MapTask, []*ReduceTask) {
+func build(sofilepath string, chunkFiles map[string]*os.File, M int) ([]*Worker, []*MapTask, []*ReduceTask) {
 	workers := make([]*Worker, numWorkers)
 	mapTasks := make([]*MapTask, M)
 	reduceTasks := make([]*ReduceTask, R)
@@ -97,8 +100,6 @@ func build(sofilepath string, chunkFiles map[string]*os.File) ([]*Worker, []*Map
 		workers[i] = &Worker{
 			id:             i,
 			workers:        workers,
-			table:          make([]*TableEntry, numWorkers),
-			tableInput:     make(chan []*TableEntry, numWorkers*2),
 			workRequests:   make(chan int, M+R),
 			workCompleted:  make(chan int, M+R),
 			checkCompleted: make(chan int, M+R),
@@ -109,9 +110,8 @@ func build(sofilepath string, chunkFiles map[string]*os.File) ([]*Worker, []*Map
 			killCh:         make(chan int, M+R),
 			heartbeat:      make(chan int, 1),
 			isLeader:       false,
-		}
-		for j := 0; j < numWorkers; j++ {
-			workers[i].table[j] = &TableEntry{id: j, hb: 0, t: 0}
+			restart:			 false,
+			numMapTasks:    M,
 		}
 	}
 	for i := 0; i < M; i++ {

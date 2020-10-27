@@ -85,7 +85,7 @@ func hash(str string) int {
 	return int(hashVal.Sum32())
 }
 
-func createChunkFiles(filepath string) map[string]*os.File {
+func createChunkFiles(filepath string, M int) map[string]*os.File {
 	checkDirExists("input_files/chunks/")
 	lineNum := 0
 	file := safeOpen(filepath, "r")

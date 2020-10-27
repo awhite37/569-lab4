@@ -20,8 +20,8 @@ const t_fail = 300 * time.Millisecond
 type Worker struct {
 	id             int
 	workers        []*Worker
-	table          []*TableEntry
-	tableInput     chan []*TableEntry
+	numMapTasks    int 
+	restart 			bool
 	workRequests   chan int
 	workCompleted  chan int
 	checkCompleted chan int
@@ -57,9 +57,10 @@ type ReduceTask struct {
 	reducef (func(string, []string) string)
 }
 
-func (worker *Worker) runMaster(mapTasks []*MapTask, reduceTasks []*ReduceTask, restart bool) {
+func (worker *Worker) runMaster(mapTasks []*MapTask, reduceTasks []*ReduceTask) {
 	fmt.Printf("launching master node\n")
-	if !restart { //launch only on init
+	M := worker.numMapTasks
+	if !worker.restart { //launch only on init
 		go worker.appendLog()
 	} else {
 		for len(worker.newCommits) > 0 {
@@ -101,7 +102,7 @@ func (worker *Worker) runMaster(mapTasks []*MapTask, reduceTasks []*ReduceTask, 
 	for len(worker.workCompleted) < M {
 		if len(worker.killCh) > 0 {
 			<-worker.killCh
-			//failure simulation, end this task
+			//failure simulation
 			return
 		}
 		//add uncompleted tasks back to list
@@ -123,7 +124,7 @@ func (worker *Worker) runMaster(mapTasks []*MapTask, reduceTasks []*ReduceTask, 
 	for len(worker.workCompleted) < M+R {
 		if len(worker.killCh) > 0 {
 			<-worker.killCh
-			//failure simulation, end this task
+			//failure simulation
 			return
 		}
 		//add uncompleted tasks back to list
@@ -249,6 +250,7 @@ func (worker *Worker) doMap(task *MapTask) {
 func (worker *Worker) doReduce(task *ReduceTask) {
 	oname := fmt.Sprintf("./output_files/mr-out-%03d", task.id)
 	ofile, _ := os.Create(oname)
+	M := worker.numMapTasks
 
 	kva := []mr.KeyVal{}
 	for i := 0; i < M; i++ {
@@ -336,20 +338,4 @@ func deleteReduce(tasks []*ReduceTask, id int) []*ReduceTask {
 		}
 	}
 	return tasks
-}
-
-func cpyMap(mapTasks []*MapTask) []*MapTask {
-	new := []*MapTask{}
-	for _, task := range mapTasks {
-		new = append(new, &MapTask{id: task.id, mapf: task.mapf, chunk: task.chunk})
-	}
-	return new
-}
-
-func cpyReduce(reduceTasks []*ReduceTask) []*ReduceTask {
-	new := []*ReduceTask{}
-	for _, task := range reduceTasks {
-		new = append(new, &ReduceTask{id: task.id, reducef: task.reducef})
-	}
-	return new
 }
