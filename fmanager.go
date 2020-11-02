@@ -130,3 +130,30 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyVal, func(string,
 
 	return mapf, reducef
 }
+
+func readFileByByteRange(start int64, offset int64, filePath string) string {
+	file := safeOpen(filePath, "r")
+	// advance file head 'start' number of bytes
+	val, seekErr := file.Seek(start, 0)
+	_ = val
+	if seekErr != nil {
+		fmt.Fprintf(os.Stderr, "error file seek '%s'\n",file.Name());
+		os.Exit(1);
+	}
+
+	// read 'offset' number of bytes from file
+	content := make([]byte, offset)
+	nBytesRead, readErr := file.Read(content)
+	if nBytesRead < int(offset) {
+		return "hs"
+	}
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "error file read '%s'\n",file.Name());
+		fmt.Fprintf(os.Stderr, "%s\n",readErr);
+		os.Exit(1);
+	}
+
+	return string(content)
+}
+
+

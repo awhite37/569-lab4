@@ -4,9 +4,13 @@ import (
 	"./rf"
 	"fmt"
 	"os"
+	"math"
 )
 
 const numWorkers = 8
+
+//number of bytes in each inputFile-chunk
+const chunkSize = 64000
 
 //number of servers for replicated logs
 const numReplicas = 2
@@ -31,12 +35,24 @@ func checkArgs(argc int, argv []string) (string, string) {
 	return argv[1], argv[2]
 }
 
+func getNumMapTasks(filePath string) int {
+	file := safeOpen(filePath, "r")
+	fileInfo, fileStatErr := file.Stat()
+	if fileStatErr != nil {
+		fmt.Fprintf(os.Stderr, "error stat on file '%s'\n",filePath);
+		os.Exit(1);
+	}
+	fileSize := fileInfo.Size()
+	numMapTasks := float64(fileSize) / float64(chunkSize)
+	return int(math.Ceil(numMapTasks))
+}
+
 func main() {
 	filename, sofilepath := checkArgs(len(os.Args), os.Args)
 	//TODO: compute M dynamically based on file size
 	//each chunk should be ~64MB
-	M := 100 
-	chunkFiles := createChunkFiles(filename, M)
+	M := getNumMapTasks(filename)
+
 	//make dir for intermediate files and output files to go in
 	path := "./intermediate_files"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -47,7 +63,7 @@ func main() {
 		os.Mkdir(path, 0700)
 	}
 
-	workers, mapTasks, reduceTaks := build(sofilepath, chunkFiles, M)
+	workers, mapTasks, reduceTaks := build(filename, sofilepath, M)
 	rfWorkers := []*rf.Worker{}
 	for i := 0; i < numReplicas; i++ {
 		persister := rf.InitPersister()
@@ -83,18 +99,11 @@ func main() {
 	fmt.Printf("\nMapReduce completed successfully\n")
 }
 
-func build(sofilepath string, chunkFiles map[string]*os.File, M int) ([]*Worker, []*MapTask, []*ReduceTask) {
+func build(inputFilePath string, sofilepath string, M int) ([]*Worker, []*MapTask, []*ReduceTask) {
 	workers := make([]*Worker, numWorkers)
 	mapTasks := make([]*MapTask, M)
 	reduceTasks := make([]*ReduceTask, R)
 	mapf, reducef := loadPlugin(sofilepath)
-
-	chunkFileNames := make([]string, len(chunkFiles))
-	i := 0
-	for k := range chunkFiles {
-		chunkFileNames[i] = k
-		i++
-	}
 
 	for i := 0; i < numWorkers; i++ {
 		workers[i] = &Worker{
@@ -116,9 +125,10 @@ func build(sofilepath string, chunkFiles map[string]*os.File, M int) ([]*Worker,
 	}
 	for i := 0; i < M; i++ {
 		mapTasks[i] = &MapTask{
-			id:    i,
-			mapf:  mapf,
-			chunk: chunkFiles[chunkFileNames[i]],
+			id:				i,
+			mapf:				mapf,
+			inputFilePath:	inputFilePath,
+			chunkOffset:	int64(i)*chunkSize,
 		}
 	}
 	for i := 0; i < R; i++ {
@@ -129,3 +139,6 @@ func build(sofilepath string, chunkFiles map[string]*os.File, M int) ([]*Worker,
 	}
 	return workers, mapTasks, reduceTasks
 }
+
+
+

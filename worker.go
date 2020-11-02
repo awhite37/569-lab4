@@ -49,7 +49,8 @@ type Task struct {
 type MapTask struct {
 	id    int
 	mapf  (func(string, string) []mr.KeyVal)
-	chunk *os.File
+	inputFilePath string
+	chunkOffset int64
 }
 
 type ReduceTask struct {
@@ -222,8 +223,9 @@ func (worker *Worker) assignReduce(requestID int, task *ReduceTask) {
 }
 
 func (worker *Worker) doMap(task *MapTask) {
-	chunkFileContent := safeRead(task.chunk.Name())
-	kva := task.mapf(task.chunk.Name(), chunkFileContent)
+	//chunkFileContent := safeRead(task.chunk.Name())
+	chunkContent := readFileByByteRange(task.chunkOffset, chunkSize, task.inputFilePath)
+	kva := task.mapf("--REDUNDANT-FILE-NAME--", chunkContent)
 	m := make(map[int][]mr.KeyVal, R)
 	for _, kv := range kva {
 		partitionNum := hash(kv.Key) % R
